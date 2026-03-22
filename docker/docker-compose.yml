@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: ocr-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ocr-network
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: ocr-backend
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - upload_data:/app/uploads
+      - result_data:/app/results
+      - model_data:/app/models
+    depends_on:
+      - redis
+    networks:
+      - ocr-network
+    restart: unless-stopped
+
+  celery-worker:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: ocr-celery-worker
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+    volumes:
+      - upload_data:/app/uploads
+      - result_data:/app/results
+      - model_data:/app/models
+    depends_on:
+      - redis
+      - backend
+    networks:
+      - ocr-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: ocr-frontend
+    depends_on:
+      - backend
+    networks:
+      - ocr-network
+    restart: unless-stopped
+
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: ocr-nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - ocr-network
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  upload_data:
+  result_data:
+  model_data:
+
+networks:
+  ocr-network:
+    driver: bridge
