@@ -43,7 +43,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
       'image/png': ['.png'],
       'image/tiff': ['.tiff', '.tif'],
     },
-    maxSize: 50 * 1024 * 1024, // 50MB
+    maxSize: 5 * 1024 * 1024, // 5MB
     disabled: uploading,
   });
 
@@ -69,7 +69,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ onUploadComplete }) => {
               <line x1="12" y1="3" x2="12" y2="15" />
             </svg>
             <p>Перетащите файлы сюда или нажмите для выбора</p>
-            <p className="file-info">PDF, JPG, PNG, TIFF (макс. 50MB)</p>
+            <p className="file-info">PDF, JPG, PNG, TIFF (макс. 5MB)</p>
           </div>
         )}
       </div>

@@ -1,8 +1,7 @@
 """
 Result download API endpoints.
 """
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, HTTPException, Response
 import logging
 from pathlib import Path
 
@@ -24,7 +23,7 @@ async def download_result(task_id: str, format: str = "txt"):
         format: Export format (txt, docx, xlsx, csv)
 
     Returns:
-        File download response
+        File download response with proper UTF-8 headers
     """
     try:
         # Check task status
@@ -52,22 +51,34 @@ async def download_result(task_id: str, format: str = "txt"):
                 detail=f"Result file not found for format: {format}"
             )
 
-        # Determine media type
-        media_types = {
-            "txt": "text/plain",
-            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "csv": "text/csv"
-        }
+        # Read file content
+        with open(result_path, 'rb') as f:
+            content = f.read()
 
-        media_type = media_types.get(format, "application/octet-stream")
+        # Determine media type with charset for text files
+        if format == "txt":
+            media_type = "text/plain; charset=utf-8"
+        elif format == "csv":
+            media_type = "text/csv; charset=utf-8"
+        elif format == "docx":
+            media_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        elif format == "xlsx":
+            media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            media_type = "application/octet-stream"
+
         filename = f"result.{format}"
 
-        return FileResponse(
-            path=str(result_path),
-            filename=filename,
-            media_type=media_type
-        )
+        # RFC 5987 encoding for UTF-8 filenames in Content-Disposition
+        # This ensures proper handling of UTF-8 encoded content
+        headers = {
+            "Content-Disposition": f'attachment; filename="{filename}"; filename*=UTF-8\'\'{filename}',
+            "Content-Type": media_type,
+            "Content-Length": str(len(content)),
+            "Access-Control-Expose-Headers": "Content-Disposition"
+        }
+
+        return Response(content=content, headers=headers)
 
     except HTTPException:
         raise

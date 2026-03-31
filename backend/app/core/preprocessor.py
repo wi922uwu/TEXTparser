@@ -6,7 +6,41 @@ import numpy as np
 from pathlib import Path
 import logging
 
+from app.constants import (
+    PREPROCESS_MAX_DIMENSION,
+    PREPROCESS_LOW_CONTRAST_STD_DEV_THRESHOLD,
+    ENHANCE_LARGE_IMAGE_THRESHOLD,
+    ENHANCE_BILATERAL_FILTER_D,
+    ENHANCE_BILATERAL_FILTER_SIGMA_COLOR,
+    ENHANCE_BILATERAL_FILTER_SIGMA_SPACE,
+    ENHANCE_NL_MEANS_H,
+    ENHANCE_NL_MEANS_TEMPLATE_WINDOW,
+    ENHANCE_NL_MEANS_SEARCH_WINDOW,
+    ENHANCE_CLAHE_CLIP_LIMIT,
+    ENHANCE_CLAHE_TILE_GRID_SIZE,
+    DESKEW_CANNY_THRESH1,
+    DESKEW_CANNY_THRESH2,
+    DESKEW_CANNY_APERTURE_SIZE,
+    DESKEW_HOUGH_THRESHOLD,
+    DESKEW_ANGLE_THRESHOLD,
+)
+
 logger = logging.getLogger(__name__)
+
+
+def to_grayscale(image: np.ndarray) -> np.ndarray:
+    """
+    Convert image to grayscale if needed.
+
+    Args:
+        image: Input image as numpy array
+
+    Returns:
+        Grayscale image
+    """
+    if len(image.shape) == 3:
+        return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    return image.copy()
 
 
 def deskew_image(image: np.ndarray) -> np.ndarray:
@@ -19,17 +53,14 @@ def deskew_image(image: np.ndarray) -> np.ndarray:
     Returns:
         Deskewed image
     """
-    # Convert to grayscale if needed
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray = image.copy()
+    # Convert to grayscale using helper function
+    gray = to_grayscale(image)
 
     # Detect edges
-    edges = cv2.Canny(gray, 50, 150, apertureSize=3)
+    edges = cv2.Canny(gray, DESKEW_CANNY_THRESH1, DESKEW_CANNY_THRESH2, apertureSize=DESKEW_CANNY_APERTURE_SIZE)
 
     # Detect lines using Hough transform
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, 200)
+    lines = cv2.HoughLines(edges, 1, np.pi / 180, DESKEW_HOUGH_THRESHOLD)
 
     if lines is None:
         return image
@@ -47,7 +78,7 @@ def deskew_image(image: np.ndarray) -> np.ndarray:
     median_angle = np.median(angles)
 
     # Rotate image if skew is significant
-    if abs(median_angle) > 0.5:
+    if abs(median_angle) > DESKEW_ANGLE_THRESHOLD:
         (h, w) = image.shape[:2]
         center = (w // 2, h // 2)
         M = cv2.getRotationMatrix2D(center, median_angle, 1.0)
@@ -59,47 +90,68 @@ def deskew_image(image: np.ndarray) -> np.ndarray:
     return image
 
 
-def enhance_image(image: np.ndarray) -> np.ndarray:
+def enhance_image(image: np.ndarray, fast_mode: bool = False, quality_mode: bool = True) -> np.ndarray:
     """
     Enhance image quality for better OCR.
+    Optimized for speed (target: <60 sec for 5MB file).
 
     Args:
         image: Input image
+        fast_mode: Use faster processing
+        quality_mode: Use enhanced processing for better quality
 
     Returns:
-        Enhanced image
+        Enhanced grayscale image
     """
-    # Convert to grayscale
-    if len(image.shape) == 3:
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Convert to grayscale using helper function (Проблема 9 - устранение дублирования)
+    gray = to_grayscale(image)
+
+    # Denoise - optimized for speed
+    height, width = gray.shape
+    if max(height, width) > ENHANCE_LARGE_IMAGE_THRESHOLD:
+        # Fast bilateral filter for large images (5x faster)
+        denoised = cv2.bilateralFilter(
+            gray,
+            ENHANCE_BILATERAL_FILTER_D,
+            ENHANCE_BILATERAL_FILTER_SIGMA_COLOR,
+            ENHANCE_BILATERAL_FILTER_SIGMA_SPACE
+        )
     else:
-        gray = image.copy()
+        # Standard denoise for smaller images
+        denoised = cv2.fastNlMeansDenoising(
+            gray, None,
+            h=ENHANCE_NL_MEANS_H,
+            templateWindowSize=ENHANCE_NL_MEANS_TEMPLATE_WINDOW,
+            searchWindowSize=ENHANCE_NL_MEANS_SEARCH_WINDOW
+        )
 
-    # Denoise
-    denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
-
-    # Enhance contrast using CLAHE
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    # Enhance contrast using CLAHE - balanced settings
+    clahe = cv2.createCLAHE(
+        clipLimit=ENHANCE_CLAHE_CLIP_LIMIT,
+        tileGridSize=ENHANCE_CLAHE_TILE_GRID_SIZE
+    )
     enhanced = clahe.apply(denoised)
 
-    # Binarization using adaptive thresholding
-    binary = cv2.adaptiveThreshold(
-        enhanced, 255,
-        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv2.THRESH_BINARY,
-        11, 2
-    )
+    # Light sharpening only for quality mode
+    if quality_mode and not fast_mode:
+        kernel = np.array([[-1, -1, -1],
+                           [-1,  9, -1],
+                           [-1, -1, -1]])
+        enhanced = cv2.filter2D(enhanced, -1, kernel)
 
-    return binary
+    # Return grayscale - PaddleOCR handles grayscale better
+    return enhanced
 
 
-def preprocess_for_ocr(image_path: str, output_path: str = None) -> str:
+def preprocess_for_ocr(image_path: str, output_path: str = None, use_smart_binarize: bool = False, fast_mode: bool = False) -> str:
     """
     Full preprocessing pipeline for OCR.
 
     Args:
         image_path: Path to input image
         output_path: Optional path to save preprocessed image
+        use_smart_binarize: Enable smart binarization for low contrast documents
+        fast_mode: Use fast preprocessing for speed
 
     Returns:
         Path to preprocessed image
@@ -114,8 +166,12 @@ def preprocess_for_ocr(image_path: str, output_path: str = None) -> str:
         # Deskew
         deskewed = deskew_image(image)
 
-        # Enhance
-        enhanced = enhance_image(deskewed)
+        # Enhance (with fast mode support)
+        enhanced = enhance_image(deskewed, fast_mode=fast_mode)
+
+        # Optional smart binarization for low contrast documents
+        if use_smart_binarize:
+            enhanced = smart_binarize(enhanced)
 
         # Save preprocessed image
         if output_path is None:
@@ -133,13 +189,39 @@ def preprocess_for_ocr(image_path: str, output_path: str = None) -> str:
         return image_path
 
 
-def resize_if_needed(image: np.ndarray, max_dimension: int = 4096) -> np.ndarray:
+def smart_binarize(image: np.ndarray) -> np.ndarray:
+    """
+    Smart binarization with automatic threshold selection.
+    Only used for documents with very low contrast.
+
+    Args:
+        image: Input grayscale image
+
+    Returns:
+        Binarized image if low contrast, otherwise original
+    """
+    # Calculate standard deviation to determine contrast
+    std_dev = np.std(image)
+
+    if std_dev < PREPROCESS_LOW_CONTRAST_STD_DEV_THRESHOLD:  # Low contrast - apply binarization
+        # Use Otsu's thresholding after Gaussian blur
+        blur = cv2.GaussianBlur(image, (5, 5), 0)
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        logger.info(f"Applied Otsu binarization (std_dev={std_dev:.1f})")
+        return binary
+    else:
+        # Good contrast - keep grayscale
+        logger.info(f"Skipping binarization (std_dev={std_dev:.1f})")
+        return image
+
+
+def resize_if_needed(image: np.ndarray, max_dimension: int = PREPROCESS_MAX_DIMENSION) -> np.ndarray:
     """
     Resize image if it's too large.
 
     Args:
         image: Input image
-        max_dimension: Maximum width or height
+        max_dimension: Maximum width or height (default: PREPROCESS_MAX_DIMENSION)
 
     Returns:
         Resized image if needed

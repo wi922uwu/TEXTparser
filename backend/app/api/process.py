@@ -18,7 +18,7 @@ async def start_processing(request: ProcessRequest):
     Start OCR processing for uploaded file.
 
     Args:
-        request: Processing request with file_id and export formats
+        request: Processing request with file_id, export formats, and quality_preset
 
     Returns:
         Task ID for tracking progress
@@ -33,10 +33,17 @@ async def start_processing(request: ProcessRequest):
                 detail=f"Invalid formats: {invalid_formats}"
             )
 
-        # Start Celery task
-        task = process_document.delay(request.file_id, request.formats)
+        # Start Celery task with quality_preset parameter
+        task = process_document.delay(
+            request.file_id,
+            request.formats,
+            quality_preset=request.quality_preset
+        )
 
-        logger.info(f"Started processing task: {task.id} for file: {request.file_id}")
+        logger.info(
+            f"Started processing task: {task.id} for file: {request.file_id} "
+            f"(quality_preset={request.quality_preset})"
+        )
 
         return ProcessResponse(task_id=task.id)
 
@@ -67,12 +74,44 @@ async def get_task_status(task_id: str):
         )
 
         if task.state == 'PROGRESS':
-            info = task.info or {}
-            response.progress = info.get('progress', 0)
-            response.step = info.get('step', '')
+            # Safely get task.info for PROGRESS state
+            try:
+                info = task.info
+                if isinstance(info, dict):
+                    response.progress = info.get('progress', 0)
+                    response.step = info.get('step', '')
+                else:
+                    response.progress = 0
+                    response.step = 'initializing'
+            except Exception:
+                # If we can't access task.info, use defaults
+                response.progress = 0
+                response.step = 'initializing'
+
         elif task.state == 'FAILURE':
-            info = task.info or {}
-            response.error = str(info.get('error', 'Unknown error'))
+            # Safely get error info for FAILURE state
+            error_msg = 'Ошибка обработки задачи'
+            try:
+                info = task.info
+                if info is None:
+                    error_msg = 'Неизвестная ошибка обработки'
+                elif isinstance(info, dict):
+                    error_msg = str(info.get('error', 'Unknown error'))
+                    if 'TimeLimitExceeded' in str(info) or 'time limit' in error_msg.lower():
+                        error_msg = 'Превышено время обработки. Попробуйте использовать быстрый режим или разбить документ на части.'
+                else:
+                    # Exception object or other types
+                    error_str = str(info)
+                    if 'TimeLimitExceeded' in error_str or 'time limit' in error_str.lower():
+                        error_msg = 'Превышено время обработки. Попробуйте использовать быстрый режим или разбить документ на части.'
+                    elif error_str:
+                        error_msg = error_str
+            except Exception:
+                # If we can't access task.info at all, use generic message
+                error_msg = 'Ошибка получения информации о задаче'
+
+            response.error = error_msg
+
         elif task.state == 'SUCCESS':
             response.progress = 100
             response.step = 'completed'

@@ -12,6 +12,10 @@ class ProcessRequest(BaseModel):
         default=["txt", "docx", "xlsx", "csv"],
         description="Export formats"
     )
+    quality_preset: str = Field(
+        default="balanced",
+        description="Quality preset: fast, balanced, or high_quality"
+    )
 
 
 class TaskStatus(BaseModel):

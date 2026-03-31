@@ -8,6 +8,7 @@ export interface UploadResponse {
 export interface ProcessRequest {
   file_id: string;
   formats: string[];
+  quality_preset?: string;
 }
 
 export interface ProcessResponse {

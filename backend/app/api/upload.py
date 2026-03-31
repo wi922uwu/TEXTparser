@@ -20,7 +20,7 @@ async def upload_file(file: UploadFile = File(...)):
     Upload a single file for OCR processing.
 
     Supported formats: PDF, JPG, PNG, TIFF
-    Max size: 50MB
+    Max size: 5MB (optimized for speed - processing under 60 seconds)
     """
     try:
         # Validate file extension
@@ -34,17 +34,18 @@ async def upload_file(file: UploadFile = File(...)):
         # Read file content
         content = await file.read()
 
-        # Validate file size
+        # Validate file size (5MB max for fast processing)
         if len(content) > settings.max_file_size:
+            max_mb = settings.max_file_size / 1024 / 1024
             raise HTTPException(
                 status_code=400,
-                detail=f"File too large. Max size: {settings.max_file_size / 1024 / 1024}MB"
+                detail=f"File too large. Maximum size is {max_mb}MB for optimal processing speed (under 60 seconds). Please compress or split your file."
             )
 
         # Save file
         file_id, file_path = file_manager.save_upload(content, file.filename)
 
-        logger.info(f"Uploaded file: {file.filename} -> {file_id}")
+        logger.info(f"Uploaded file: {file.filename} ({len(content) / 1024:.1f}KB) -> {file_id}")
 
         return UploadResponse(
             file_id=file_id,
@@ -65,9 +66,10 @@ async def upload_files(files: List[UploadFile] = File(...)):
     Upload multiple files for batch processing.
 
     Supported formats: PDF, JPG, PNG, TIFF
-    Max size per file: 50MB
+    Max size per file: 5MB (optimized for speed)
     """
     responses = []
+    max_mb = settings.max_file_size / 1024 / 1024
 
     for file in files:
         try:
@@ -80,7 +82,7 @@ async def upload_files(files: List[UploadFile] = File(...)):
             content = await file.read()
 
             if len(content) > settings.max_file_size:
-                logger.warning(f"Skipping large file: {file.filename}")
+                logger.warning(f"Skipping large file {file.filename} (>{max_mb}MB)")
                 continue
 
             file_id, file_path = file_manager.save_upload(content, file.filename)
@@ -96,6 +98,6 @@ async def upload_files(files: List[UploadFile] = File(...)):
             continue
 
     if not responses:
-        raise HTTPException(status_code=400, detail="No valid files uploaded")
+        raise HTTPException(status_code=400, detail=f"No valid files uploaded. Maximum file size is {max_mb}MB per file.")
 
     return responses

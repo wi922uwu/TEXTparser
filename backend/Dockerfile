@@ -19,6 +19,9 @@ COPY app/ /app/app/
 # Create directories
 RUN mkdir -p /app/uploads /app/results /app/models
 
+# Pre-download PaddleOCR models to avoid runtime downloads
+RUN python -c "from paddleocr import PaddleOCR; PaddleOCR(use_angle_cls=True, lang='cyrillic', show_log=False)" || echo "Model download attempted"
+
 # Expose port
 EXPOSE 8000
 

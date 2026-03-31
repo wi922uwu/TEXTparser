@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/0"
 
     # File limits
-    max_file_size: int = 50 * 1024 * 1024  # 50MB
+    max_file_size: int = 5 * 1024 * 1024  # 5MB (optimized for speed)
     allowed_extensions: set = {".pdf", ".jpg", ".jpeg", ".png", ".tiff", ".tif"}
 
     # OCR settings

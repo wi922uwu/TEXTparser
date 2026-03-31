@@ -4,28 +4,23 @@ Text extraction and structuring from OCR results.
 from typing import List, Dict
 import logging
 
+from app.constants import PREPROCESS_LINE_THRESHOLD
+
 logger = logging.getLogger(__name__)
 
 
-def extract_text_blocks(ocr_result: Dict) -> List[Dict]:
-    """
-    Extract and structure text blocks from OCR result.
-
-    Args:
-        ocr_result: OCR result dictionary
-
-    Returns:
-        List of structured text blocks
-    """
-    return ocr_result.get("text_blocks", [])
-
-
-def sort_reading_order(blocks: List[Dict]) -> List[Dict]:
+def sort_reading_order(blocks: List[Dict], line_tolerance: int = 10) -> List[Dict]:
     """
     Sort text blocks in reading order (top-to-bottom, left-to-right).
 
+    Uses line grouping to handle multi-column documents correctly:
+    1. Group blocks by Y-coordinate with tolerance
+    2. Sort groups by Y (top-to-bottom)
+    3. Sort each group by X (left-to-right)
+
     Args:
         blocks: List of text blocks with bounding boxes
+        line_tolerance: Pixels of vertical tolerance for grouping blocks on same line
 
     Returns:
         Sorted list of blocks
@@ -33,17 +28,39 @@ def sort_reading_order(blocks: List[Dict]) -> List[Dict]:
     if not blocks:
         return blocks
 
-    # Sort by vertical position first (y-coordinate)
-    # Then by horizontal position (x-coordinate) for blocks on same line
-    sorted_blocks = sorted(blocks, key=lambda b: (
-        b["box"][0][1],  # Top y-coordinate
-        b["box"][0][0]   # Left x-coordinate
-    ))
+    # Group blocks by vertical position with tolerance
+    # This handles multi-column documents correctly
+    groups = []
+    for block in blocks:
+        y_center = block["box"][0][1]
+        placed = False
+
+        for group in groups:
+            # Check if this block belongs to an existing group (same line)
+            group_y = group[0]["box"][0][1]
+            if abs(y_center - group_y) <= line_tolerance:
+                group.append(block)
+                placed = True
+                break
+
+        if not placed:
+            groups.append([block])
+
+    # Sort each group by X-coordinate (left-to-right)
+    for group in groups:
+        group.sort(key=lambda b: b["box"][0][0])
+
+    # Sort groups by Y-coordinate (top-to-bottom) and flatten
+    groups.sort(key=lambda g: g[0]["box"][0][1])
+
+    sorted_blocks = []
+    for group in groups:
+        sorted_blocks.extend(group)
 
     return sorted_blocks
 
 
-def group_into_paragraphs(blocks: List[Dict], line_threshold: int = 30) -> List[str]:
+def group_into_paragraphs(blocks: List[Dict], line_threshold: int = PREPROCESS_LINE_THRESHOLD) -> List[str]:
     """
     Group text blocks into paragraphs based on vertical spacing.
 
@@ -80,13 +97,14 @@ def group_into_paragraphs(blocks: List[Dict], line_threshold: int = 30) -> List[
     return paragraphs
 
 
-def assemble_text(blocks: List[Dict], preserve_structure: bool = True) -> str:
+def assemble_text(blocks: List[Dict], preserve_structure: bool = True, already_sorted: bool = False) -> str:
     """
     Assemble final text from blocks.
 
     Args:
         blocks: Text blocks
         preserve_structure: Whether to preserve paragraph structure
+        already_sorted: If True, blocks are already sorted (skip redundant sorting)
 
     Returns:
         Final assembled text
@@ -94,7 +112,8 @@ def assemble_text(blocks: List[Dict], preserve_structure: bool = True) -> str:
     if not blocks:
         return ""
 
-    sorted_blocks = sort_reading_order(blocks)
+    # Проблема 13: Убираем повторную сортировку, если блоки уже отсортированы
+    sorted_blocks = blocks if already_sorted else sort_reading_order(blocks)
 
     if preserve_structure:
         paragraphs = group_into_paragraphs(sorted_blocks)
@@ -113,10 +132,12 @@ def extract_structured_text(ocr_result: Dict) -> Dict:
     Returns:
         Structured text with metadata
     """
-    blocks = extract_text_blocks(ocr_result)
+    # Проблема 12: Удалена функция extract_text_blocks(), используем напрямую
+    blocks = ocr_result.get("text_blocks", [])
     sorted_blocks = sort_reading_order(blocks)
     paragraphs = group_into_paragraphs(sorted_blocks)
-    full_text = assemble_text(blocks)
+    # Проблема 13: Используем уже отсортированные блоки
+    full_text = assemble_text(sorted_blocks, already_sorted=True)
 
     # Calculate average confidence
     confidences = [b["confidence"] for b in blocks if "confidence" in b]

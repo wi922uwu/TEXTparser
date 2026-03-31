@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List
 import fitz  # PyMuPDF
 from PIL import Image
+from celery.exceptions import SoftTimeLimitExceeded
 
 from app.tasks.celery_app import celery_app
 from app.core.ocr_engine import OCREngine
@@ -31,18 +32,26 @@ EXPORTERS = {
 }
 
 
-@celery_app.task(bind=True)
-def process_document(self, file_id: str, export_formats: List[str]):
+@celery_app.task(
+    bind=True,
+    time_limit=60,  # Жесткий лимит 60 секунд (для файлов до 5MB)
+    soft_time_limit=55  # Мягкий лимит для graceful завершения
+)
+def process_document(self, file_id: str, export_formats: List[str], quality_preset: str = "balanced"):
     """
     Process document with OCR and export to requested formats.
 
     Args:
         file_id: Uploaded file ID
         export_formats: List of formats to export (txt, docx, xlsx, csv)
+        quality_preset: Quality preset - "fast", "balanced", or "high_quality"
 
     Returns:
         Dictionary with processing results
     """
+    image_paths = []
+    preprocessed_paths = []
+
     try:
         self.update_state(state='PROGRESS', meta={'step': 'loading', 'progress': 10})
 
@@ -51,7 +60,16 @@ def process_document(self, file_id: str, export_formats: List[str]):
         if not file_path:
             raise FileNotFoundError(f"File not found: {file_id}")
 
-        logger.info(f"Processing file: {file_id}")
+        # TOCTOU: file may be deleted between check and use
+        try:
+            file_path_exists = file_path.exists()
+        except OSError as e:
+            raise FileNotFoundError(f"Не удалось получить доступ к файлу {file_id}: {e}")
+
+        if not file_path_exists:
+            raise FileNotFoundError(f"Файл не найден: {file_id}")
+
+        logger.info(f"Processing file: {file_id} (quality_preset={quality_preset})")
 
         # Convert PDF to images if needed
         image_paths = []
@@ -61,14 +79,14 @@ def process_document(self, file_id: str, export_formats: List[str]):
         else:
             image_paths = [str(file_path)]
 
-        # Preprocess images
+        # Preprocess images (with fast mode support)
         self.update_state(state='PROGRESS', meta={'step': 'preprocessing', 'progress': 30})
         preprocessed_paths = []
         for img_path in image_paths:
-            preprocessed = preprocess_for_ocr(img_path)
+            preprocessed = preprocess_for_ocr(img_path, fast_mode=(quality_preset == "fast"))
             preprocessed_paths.append(preprocessed)
 
-        # Run OCR on all pages
+        # Run OCR on all pages (with fast mode support)
         self.update_state(state='PROGRESS', meta={'step': 'ocr_processing', 'progress': 50})
         all_results = []
         for idx, img_path in enumerate(preprocessed_paths):
@@ -77,11 +95,23 @@ def process_document(self, file_id: str, export_formats: List[str]):
                 state='PROGRESS',
                 meta={'step': f'ocr_page_{idx+1}', 'progress': int(progress)}
             )
-            result = ocr_engine.process_document(img_path)
+            # Pass fast_mode for faster OCR and skip table detection
+            result = ocr_engine.process_document(img_path, enable_tables=(quality_preset != "fast"), quality_preset=quality_preset)
             all_results.append(result)
 
         # Combine results from all pages
         combined_result = combine_page_results(all_results)
+
+        # Check if OCR produced any text before exporting
+        full_text = combined_result.get("text", {}).get("full_text", "").strip()
+        if not full_text:
+            logger.warning(f"No text recognized for file: {file_id}")
+            return {
+                'status': 'failed',
+                'file_id': file_id,
+                'error': 'Текст не распознан. Возможно, файл содержит только изображения или качество слишком низкое.',
+                'quality_preset': quality_preset
+            }
 
         # Export to requested formats
         self.update_state(state='PROGRESS', meta={'step': 'exporting', 'progress': 85})
@@ -105,13 +135,35 @@ def process_document(self, file_id: str, export_formats: List[str]):
             'file_id': file_id,
             'results': result_paths,
             'page_count': len(all_results),
-            'has_tables': combined_result.get('has_tables', False)
+            'has_tables': combined_result.get('has_tables', False),
+            'quality_preset': quality_preset
         }
 
+    except SoftTimeLimitExceeded:
+        logger.warning(f"Soft time limit exceeded for {file_id}")
+        # Return error result instead of raising to avoid Celery serialization issues
+        return {
+            'status': 'failed',
+            'file_id': file_id,
+            'error': 'Превышено время обработки (максимум 1 минута). Попробуйте использовать быстрый режим или разбить документ на части.',
+            'quality_preset': quality_preset
+        }
     except Exception as e:
         logger.error(f"Error processing {file_id}: {e}")
-        self.update_state(state='FAILURE', meta={'error': str(e)})
-        raise
+        # Return error result instead of raising to avoid Celery serialization issues
+        return {
+            'status': 'failed',
+            'file_id': file_id,
+            'error': str(e),
+            'quality_preset': quality_preset
+        }
+    finally:
+        # Очистка временных файлов (Проблема 3)
+        # Собираем все временные файлы в один список для очистки
+        all_temp_files = list(set(image_paths + preprocessed_paths))
+        if all_temp_files:
+            cleanup_temp_files(all_temp_files)
+            logger.info(f"Очищено {len(all_temp_files)} временных файлов")
 
 
 def convert_pdf_to_images(pdf_path: Path) -> List[str]:
@@ -176,3 +228,35 @@ def combine_page_results(results: List[dict]) -> dict:
         "tables": all_tables,
         "has_tables": has_tables
     }
+
+
+def cleanup_temp_files(file_paths: List[str]) -> None:
+    """
+    Remove temporary files created during processing.
+
+    Handles TOCTOU race conditions gracefully - files may be deleted
+    by another process between check and unlink.
+
+    Args:
+        file_paths: List of file paths to delete
+    """
+    for file_path in file_paths:
+        try:
+            path = Path(file_path)
+            # Attempt to unlink directly - handles TOCTOU race condition
+            # If file doesn't exist, FileNotFoundError is expected and harmless
+            if path.exists():
+                path.unlink(missing_ok=True)
+                logger.debug(f"Deleted temp file: {file_path}")
+        except FileNotFoundError:
+            # File was already deleted (TOCTOU race condition) - this is OK
+            logger.debug(f"Temp file already deleted: {file_path}")
+        except PermissionError as e:
+            # File is locked by another process - log but continue
+            logger.warning(f"Temp file locked by another process: {file_path}")
+        except OSError as e:
+            # Other OS errors (disk full, etc.) - log but continue cleanup
+            logger.warning(f"OS error deleting temp file {file_path}: {e}")
+        except Exception as e:
+            # Unexpected errors - log but don't fail the entire cleanup
+            logger.warning(f"Unexpected error deleting temp file {file_path}: {e}")

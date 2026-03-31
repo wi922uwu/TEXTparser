@@ -25,6 +25,7 @@ services:
       - upload_data:/app/uploads
       - result_data:/app/results
       - model_data:/app/models
+      - paddle_models:/root/.paddleocr
     depends_on:
       - redis
     networks:
@@ -45,6 +46,7 @@ services:
       - upload_data:/app/uploads
       - result_data:/app/results
       - model_data:/app/models
+      - paddle_models:/root/.paddleocr
     depends_on:
       - redis
       - backend
@@ -82,6 +84,7 @@ volumes:
   upload_data:
   result_data:
   model_data:
+  paddle_models:
 
 networks:
   ocr-network:

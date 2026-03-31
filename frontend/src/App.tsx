@@ -10,11 +10,12 @@ function App() {
   const [processingTasks, setProcessingTasks] = useState<ProcessingTask[]>([]);
   const [completedTasks, setCompletedTasks] = useState<ProcessingTask[]>([]);
   const [selectedFormats, setSelectedFormats] = useState<string[]>(['txt', 'docx', 'xlsx', 'csv']);
+  const [qualityPreset, setQualityPreset] = useState<string>("balanced");
 
   const handleUploadComplete = async (uploads: Array<{ fileId: string; filename: string }>) => {
     for (const upload of uploads) {
       try {
-        const response = await startProcessing(upload.fileId, selectedFormats);
+        const response = await startProcessing(upload.fileId, selectedFormats, qualityPreset);
 
         const newTask: ProcessingTask = {
           taskId: response.task_id,
@@ -74,6 +75,42 @@ function App() {
               </label>
             ))}
           </div>
+
+          <div className="quality-selector">
+            <h3>Качество распознавания:</h3>
+            <div className="quality-options">
+              <label className="quality-option">
+                <input
+                  type="radio"
+                  name="quality"
+                  value="fast"
+                  checked={qualityPreset === "fast"}
+                  onChange={(e) => setQualityPreset(e.target.value)}
+                />
+                <span>⚡ Быстрый (менее точно, но быстрее)</span>
+              </label>
+              <label className="quality-option">
+                <input
+                  type="radio"
+                  name="quality"
+                  value="balanced"
+                  checked={qualityPreset === "balanced"}
+                  onChange={(e) => setQualityPreset(e.target.value)}
+                />
+                <span>✓ Сбалансированный (по умолчанию)</span>
+              </label>
+              <label className="quality-option">
+                <input
+                  type="radio"
+                  name="quality"
+                  value="high_quality"
+                  checked={qualityPreset === "high_quality"}
+                  onChange={(e) => setQualityPreset(e.target.value)}
+                />
+                <span>🎯 Высокое (максимальная точность)</span>
+              </label>
+            </div>
+          </div>
         </div>
 
         <FileUpload onUploadComplete={handleUploadComplete} />
@@ -87,7 +124,7 @@ function App() {
       </main>
 
       <footer className="app-footer">
-        <p>Поддерживаемые форматы: PDF, JPG, PNG, TIFF | Максимальный размер: 50MB</p>
+        <p>Поддерживаемые форматы: PDF, JPG, PNG, TIFF | Максимальный размер: 5MB</p>
       </footer>
     </div>
   );

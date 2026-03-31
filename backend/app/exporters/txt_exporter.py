@@ -25,7 +25,8 @@ class TXTExporter(BaseExporter):
         self._ensure_output_dir(output_path)
 
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
+            # Используем utf-8-sig с BOM для корректного отображения кириллицы в Windows Notepad
+            with open(output_path, 'w', encoding='utf-8-sig') as f:
                 # Write text content
                 text_data = data.get("text", {})
                 full_text = text_data.get("full_text", "")

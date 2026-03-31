@@ -37,11 +37,13 @@ export const uploadFiles = async (files: File[]): Promise<UploadResponse[]> => {
 
 export const startProcessing = async (
   fileId: string,
-  formats: string[]
+  formats: string[],
+  qualityPreset: string = "balanced"
 ): Promise<ProcessResponse> => {
   const request: ProcessRequest = {
     file_id: fileId,
     formats,
+    quality_preset: qualityPreset,
   };
 
   const response = await api.post<ProcessResponse>('/process', request);
