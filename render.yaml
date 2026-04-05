@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: document-processor-api
+    env: docker
+    dockerfilePath: backend/Dockerfile
+    plan: starter
+    healthCheckPath: /docs
+    autoDeploy: true
+    envVars:
+      - key: MAX_FILE_SIZE_MB
+        value: "50"
+      - key: OCR_TIMEOUT_SECONDS
+        value: "300"
