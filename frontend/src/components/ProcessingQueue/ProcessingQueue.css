@@ -1,0 +1,72 @@
+.processing-queue {
+  margin: 30px 0;
+}
+
+.processing-queue h2 {
+  margin-bottom: 16px;
+  color: #333;
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.queue-item {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.filename {
+  font-weight: 500;
+  color: #333;
+}
+
+.status {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: #e3f2fd;
+  color: #1976d2;
+}
+
+.progress-bar {
+  height: 8px;
+  background-color: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: #4CAF50;
+  transition: width 0.3s ease;
+}
+
+.task-info {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+  color: #666;
+}
+
+.task-success {
+  color: #4CAF50;
+  font-weight: 500;
+}
+
+.task-error {
+  color: #f44336;
+  font-weight: 500;
+}

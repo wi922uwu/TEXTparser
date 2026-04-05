@@ -1,0 +1,11 @@
+.git
+.gitignore
+*.md
+docs/
+.remember/
+tz.txt
+node_modules/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
